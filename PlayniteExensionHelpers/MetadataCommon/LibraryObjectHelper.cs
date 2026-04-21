@@ -15,7 +15,7 @@ public static class LibraryObjectHelper
 
         if (!typeId.IsNullOrEmpty())
         {
-            type = libraryCollection.FirstOrDefault(t => t.Id == typeId);
+            type = libraryCollection.Get(typeId);
         }
 
         if (type == null && !name.IsNullOrEmpty())
@@ -27,10 +27,10 @@ public static class LibraryObjectHelper
         {
             if (typeId.IsNullOrEmpty())
             {
-                typeId = name.ToTypeId();
+                typeId = name.ToTypeId() ?? string.Empty;
             }
 
-            type = libraryCollection.FirstOrDefault(t => t.Id == typeId);
+            type = libraryCollection.Get(typeId);
         }
 
         if (type == null && !typeId.IsNullOrEmpty() && !name.IsNullOrEmpty() && createNew)
