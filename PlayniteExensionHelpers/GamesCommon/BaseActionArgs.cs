@@ -2,12 +2,18 @@
 
 namespace PlayniteExtensionHelpers.GamesCommon;
 
-public class BaseActionArgs(IPlayniteApi api, List<GameEx> games, string pluginName)
+public class BaseActionArgs(string id, string name, IPlayniteApi api, List<GameEx> games, string pluginName)
 {
     public IPlayniteApi Api { get; } = api;
     public virtual bool DebugMode { get; set; } = false;
+    public virtual List<GameEx> Games { get; } = games;
     public virtual bool GamesNeedUpdate { get; set; } = true;
+    public virtual string Id { get; set; } = id;
     public virtual bool IsBulkAction { get; set; } = games.Count > 1;
-    public string PluginName { get; set; } = pluginName;
+    public virtual bool IsPausable { get; set; } = false;
+    public virtual string Name { get; set; } = name;
+    public virtual string PluginName { get; set; } = pluginName;
+    public virtual string ProgressMessage { get; set; } = string.Empty;
+    public virtual string ResultMessageId { get; set; } = string.Empty;
     public virtual bool ShowDialogs { get; set; } = true;
 }

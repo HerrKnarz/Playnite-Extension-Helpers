@@ -2,21 +2,24 @@
 
 namespace PlayniteExtensionHelpers.GamesCommon;
 
-public abstract class BaseAction : IBaseAction
+/// <summary>
+/// Base class to be used to execute an action for a list of games. Needs to be inherited by the
+/// actual action class.
+/// </summary>
+public abstract class BaseAction
 {
-    internal readonly List<Game> _gamesAffected = [];
+    public virtual string Id { get; } = "base.action";
+    public virtual string Name { get; } = "Base Action";
 
-    public abstract string ProgressMessage { get; }
-    public abstract string ResultMessageId { get; }
-
-    public virtual async Task DoForAllAsync(List<GameEx> games, BaseActionArgs args)
+    /// <summary>
+    /// Executes the action on all games in a blocking Task.
+    /// </summary>
+    /// <param name="args">Arguments for the game action</param>
+    public virtual async Task DoForAllAsync(BaseActionArgs args)
     {
-        // NEXT: Set IsUpdating outside of this!
-        var gamesAffected = 0;
-
         if (args.DebugMode)
         {
-            Log.Debug($"===> Started {GetType()} for {games.Count} games. =======================");
+            Log.Debug($"===> Started {GetType()} for {args.Games.Count} games. =======================");
         }
 
         Cursor.Current = Cursors.WaitCursor;
@@ -28,23 +31,20 @@ public abstract class BaseAction : IBaseAction
                 return;
             }
 
-            if (games.Count == 1)
+            if (args.Games.Count == 1)
             {
                 args.IsBulkAction = false;
 
-                if (await ExecuteAsync(games.First(), args))
-                {
-                    gamesAffected++;
-                }
+                args.Games.First().NeedsToBeUpdated = await ExecuteAsync(args.Games.First(), args);
 
                 await FollowUpAsync(args);
             }
             // if we have more than one game in the list, we want to start buffered mode and show a
             // progress bar.
-            else if (games.Count > 1)
+            else if (args.Games.Count > 1)
             {
                 var globalProgressOptions = new GlobalProgressOptions(
-                    $"{args.PluginName} - {ProgressMessage}",
+                    $"{args.PluginName} - {args.ProgressMessage}",
                     true
                 )
                 {
@@ -56,24 +56,21 @@ public abstract class BaseAction : IBaseAction
                     {
                         try
                         {
-                            globalProcessArgs.SetProgressMaxValue(games.Count);
+                            globalProcessArgs.SetProgressMaxValue(args.Games.Count);
 
                             var counter = 0;
 
                             // TODO: Check if using UpdateAsync with the result of old and new data could be useful.
-                            foreach (var game in games)
+                            foreach (var game in args.Games)
                             {
-                                globalProcessArgs.SetText($"{args.PluginName}{Environment.NewLine}{ProgressMessage}{Environment.NewLine}{game.Game?.Name}");
+                                globalProcessArgs.SetText($"{args.PluginName}{Environment.NewLine}{args.ProgressMessage}{Environment.NewLine}{game.Game?.Name}");
 
                                 if (globalProcessArgs.CancelToken.IsCancellationRequested)
                                 {
                                     break;
                                 }
 
-                                if (await ExecuteAsync(game, args))
-                                {
-                                    gamesAffected++;
-                                }
+                                game.NeedsToBeUpdated = game.Game is not null && await ExecuteAsync(game, args);
 
                                 globalProcessArgs.SetCrrentProgressValue(++counter);
                             }
@@ -92,36 +89,63 @@ public abstract class BaseAction : IBaseAction
                 }
 
                 Cursor.Current = Cursors.Default;
-                await args.Api.Dialogs.ShowMessageAsync(args.Api.GetLocalizedString(ResultMessageId, ("gameCount", gamesAffected)));
+                await args.Api.Dialogs.ShowMessageAsync(args.Api.GetLocalizedString(args.ResultMessageId, ("gameCount", args.Games.Count(g => g.NeedsToBeUpdated))));
             }
         }
         finally
         {
             if (args.DebugMode)
             {
-                Log.Debug($"===> Finished {GetType()} with {gamesAffected} games affected. =======================");
+                Log.Debug($"===> Finished {GetType()} with {args.Games.Count(g => g.NeedsToBeUpdated)} games affected. =======================");
             }
 
             Cursor.Current = Cursors.Default;
         }
     }
 
+    /// <summary>
+    /// Executes the action on all games in a background Task.
+    /// </summary>
+    /// <param name="args">Arguments for the game action</param>
+    public virtual void DoForAllBackground(BaseActionArgs args)
+        => args.Api.AddBackgroundOperation(new BaseActionBackgroundOp(args, PrepareAsync, ExecuteAsync, FollowUpAsync));
+
+    /// <summary>
+    /// Executes the action on a game.
+    /// </summary>
+    /// <param name="game">The game to be processed</param>
+    /// <param name="args">Arguments for the game action</param>
+    /// <returns>true, if the action was successful</returns>
     public abstract Task<bool> ExecuteAsync(GameEx game, BaseActionArgs args);
 
+    /// <summary>
+    /// Executes follow-up steps after the execute method was run. Should be executed after a loop
+    /// containing the Execute method.
+    /// </summary>
+    /// <param name="args">Arguments for the game action</param>
+    /// <returns>true, if the action was successful</returns>
     public virtual async Task FollowUpAsync(BaseActionArgs args)
     {
         if (args.GamesNeedUpdate)
         {
-            await GameUpdater.UpdateGamesAsync(_gamesAffected, args.Api, args.DebugMode);
+            await GameUpdater.UpdateGamesAsync(args.Games.Where(g => g.NeedsToBeUpdated).Select(g => g.Game).ToList(), args.Api, args.DebugMode);
         }
-
-        _gamesAffected.Clear();
     }
 
-    public virtual async Task<bool> PrepareAsync(BaseActionArgs args)
-    {
-        _gamesAffected.Clear();
+    /// <summary>
+    /// Creates an instance of the arguments needed to perform the action
+    /// </summary>
+    /// <param name="api">Instance of the playnite API</param>
+    /// <param name="games">List of games the action will be executed for</param>
+    /// <param name="pluginName">Name of the plugin</param>
+    /// <returns>arguments to use in the action</returns>
+    public virtual BaseActionArgs GetActionArgs(IPlayniteApi api, List<GameEx> games, string pluginName) => new(Id, Name, api, games, pluginName);
 
-        return true;
-    }
+    /// <summary>
+    /// Prepares the link action before performing the execute method. Should be executed before a
+    /// loop containing the Execute method.
+    /// </summary>
+    /// <param name="args">Arguments for the game action</param>
+    /// <returns>true, if the action was successful</returns>
+    public virtual async Task<bool> PrepareAsync(BaseActionArgs args) => true;
 }
