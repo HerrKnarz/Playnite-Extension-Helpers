@@ -111,6 +111,23 @@ public abstract class BaseAction
         => args.Api.AddBackgroundOperation(new BaseActionBackgroundOp(args, PrepareAsync, ExecuteAsync, FollowUpAsync));
 
     /// <summary>
+    /// DoForAll method that executes in a blocking thread for only one game but uses the background
+    /// operation for multiple games.
+    /// </summary>
+    /// <param name="args">Arguments for the game action</param>
+    public virtual async Task DoForAllBackgroundOrAsync(BaseActionArgs args)
+    {
+        if (args.Games.Count == 1)
+        {
+            await DoForAllAsync(args);
+        }
+        else
+        {
+            DoForAllBackground(args);
+        }
+    }
+
+    /// <summary>
     /// Executes the action on a game.
     /// </summary>
     /// <param name="game">The game to be processed</param>
