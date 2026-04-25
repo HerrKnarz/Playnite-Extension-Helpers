@@ -6,27 +6,120 @@ public class BaseActionBackgroundOp : BackgroundOperation
 {
     private readonly BaseActionArgs _actionArgs;
     private readonly CancellationTokenSource _cancelToken = new();
-    private readonly Func<GameEx, BaseActionArgs, Task<bool>> _executeFunc;
+    private readonly Func<BaseActionGame, BaseActionArgs, Task<bool>> _executeFunc;
     private readonly Func<BaseActionArgs, Task> _followUpFunc;
-
     private readonly Func<BaseActionArgs, Task<bool>> _prepareFunc;
+    private readonly Func<Game, BaseActionGame, bool> _updateGameFunc;
 
     public BaseActionBackgroundOp(BaseActionArgs args,
         Func<BaseActionArgs, Task<bool>> prepareFunc,
-        Func<GameEx, BaseActionArgs, Task<bool>> executeFunc,
-        Func<BaseActionArgs, Task> followUpFunc) : base(args.Id, $"{args.PluginName}: {args.Name}")
+        Func<BaseActionGame, BaseActionArgs, Task<bool>> executeFunc,
+        Func<BaseActionArgs, Task> followUpFunc,
+        Func<Game, BaseActionGame, bool> updateGameFunc) : base(args.Id, $"{args.PluginName}: {args.Name}")
     {
         Pausable = false;
         _actionArgs = args;
         _prepareFunc = prepareFunc;
         _executeFunc = executeFunc;
         _followUpFunc = followUpFunc;
+        _updateGameFunc = updateGameFunc;
     }
 
     public override async ValueTask DisposeAsync()
     {
         _cancelToken.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Executes the action on all games in a blocking Task.
+    /// </summary>
+    /// <param name="args">Arguments for the game action</param>
+    public virtual async Task DoForAllAsync()
+    {
+        try
+        {
+            if (!await _prepareFunc(_actionArgs))
+            {
+                return;
+            }
+
+            if (_actionArgs.Games.Count == 1)
+            {
+                _actionArgs.IsBulkAction = false;
+
+                _actionArgs.Games.First().NeedsToBeUpdated = await _executeFunc(_actionArgs.Games.First(), _actionArgs);
+
+                await FollowUpAsync();
+
+                await _followUpFunc(_actionArgs);
+            }
+            // if we have more than one game in the list, we want to start buffered mode and show a
+            // progress bar.
+            else if (_actionArgs.Games.Count > 1)
+            {
+                var globalProgressOptions = new GlobalProgressOptions(
+                    $"{_actionArgs.PluginName} - {_actionArgs.ProgressMessage}",
+                    true
+                )
+                {
+                    IsIndeterminate = false
+                };
+
+                await _actionArgs.Api.Dialogs.ShowAsyncBlockingProgressAsync(globalProgressOptions,
+                    async (globalProcessArgs) =>
+                    {
+                        try
+                        {
+                            globalProcessArgs.SetProgressMaxValue(_actionArgs.Games.Count);
+
+                            var counter = 0;
+
+                            foreach (var game in _actionArgs.Games)
+                            {
+                                globalProcessArgs.SetText($"{_actionArgs.PluginName}{Environment.NewLine}{_actionArgs.ProgressMessage}{Environment.NewLine}{game.Game?.Name}");
+
+                                if (globalProcessArgs.CancelToken.IsCancellationRequested)
+                                {
+                                    break;
+                                }
+
+                                game.NeedsToBeUpdated = game.Game is not null && await _executeFunc(game, _actionArgs);
+
+                                globalProcessArgs.SetCrrentProgressValue(++counter);
+                            }
+
+                            await FollowUpAsync();
+
+                            await _followUpFunc(_actionArgs);
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error(ex);
+                        }
+                    });
+
+                if (!_actionArgs.ShowDialogs)
+                {
+                    return;
+                }
+
+                Cursor.Current = Cursors.Default;
+                await _actionArgs.Api.Dialogs.ShowMessageAsync(_actionArgs.Api.GetLocalizedString(_actionArgs.ResultMessageId, ("gameCount", _actionArgs.Games.Count(g => g.NeedsToBeUpdated))));
+            }
+        }
+        catch (Exception e)
+        {
+            Log.Error(e);
+        }
+    }
+
+    public virtual async Task FollowUpAsync()
+    {
+        if (_actionArgs.GamesNeedUpdate)
+        {
+            await _actionArgs.Api.Library.Games.UpdateAsync([.. _actionArgs.Games.Where(g => g.NeedsToBeUpdated).Select(g => g.Game.Id)], UpdateInDb);
+        }
     }
 
     public override async Task StartAsync(StartArgs args)
@@ -53,6 +146,7 @@ public class BaseActionBackgroundOp : BackgroundOperation
 
                     var counter = 0;
 
+                    //NEXT: Make background operations pause-able!
                     foreach (var game in _actionArgs.Games)
                     {
                         Status = $"{_actionArgs.ProgressMessage}{Environment.NewLine}{game.Game?.Name}";
@@ -66,6 +160,8 @@ public class BaseActionBackgroundOp : BackgroundOperation
 
                         ProgressValue = ++counter;
                     }
+
+                    await FollowUpAsync();
 
                     await _followUpFunc(_actionArgs);
 
@@ -90,4 +186,17 @@ public class BaseActionBackgroundOp : BackgroundOperation
     }
 
     public override async Task StopAsync(StopArgs args) => await _cancelToken.CancelAsync();
+
+    /// <summary>
+    /// Updates the game directly in the database. Should only be called in an UpdateAsync method of
+    /// the game library. The game will only be updated, if the method returns true.
+    /// </summary>
+    /// <param name="game">Game to update</param>
+    /// <returns>true, if the game needs to be updated.</returns>
+    public virtual bool UpdateInDb(Game game)
+    {
+        var processedGame = _actionArgs?.Games.FirstOrDefault(g => g.GameId.Equals(game.Id));
+
+        return processedGame is not null && _updateGameFunc(game, processedGame);
+    }
 }
