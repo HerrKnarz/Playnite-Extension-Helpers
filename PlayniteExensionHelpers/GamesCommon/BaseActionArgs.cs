@@ -2,10 +2,19 @@
 
 namespace PlayniteExtensionHelpers.GamesCommon;
 
+public enum DoForAllTypes
+{
+    BlockingLoop,
+    BlockingBulkUpdate,
+    BackgroundOperation,
+    SingleBlockingMultiBackground
+}
+
 public class BaseActionArgs(string id, string name, IPlayniteApi api, List<BaseActionGame> games, string pluginName)
 {
     public IPlayniteApi Api { get; } = api;
     public virtual bool DebugMode { get; set; } = false;
+    public virtual DoForAllTypes DoForAllType { get; set; } = DoForAllTypes.BlockingLoop;
     public virtual List<BaseActionGame> Games { get; } = games;
     public virtual bool GamesNeedUpdate { get; set; } = true;
     public virtual string Id { get; set; } = id;

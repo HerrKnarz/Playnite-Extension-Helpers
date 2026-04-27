@@ -18,52 +18,33 @@ public abstract class BaseAction
     /// <param name="args">Arguments for the game action</param>
     public virtual async Task DoForAllAsync(BaseActionArgs args)
     {
-        if (args.DebugMode)
+        var blockingOp = new BaseActionBackgroundOp(args, PrepareAsync, ExecuteAsync, FollowUpAsync, ProcessUpdateData);
+
+        switch (args.DoForAllType)
         {
-            Log.Debug($"===> Started {GetType()} for {args.Games.Count} games. =======================");
-        }
+            case DoForAllTypes.BlockingLoop:
+            case DoForAllTypes.BlockingBulkUpdate:
+                await blockingOp.DoForAllAsync();
+                break;
 
-        Cursor.Current = Cursors.WaitCursor;
+            // TODO: If possible check if the same operation is still running and ask if the user still wants to add another one to the list.
+            case DoForAllTypes.BackgroundOperation:
+                args.Api.AddBackgroundOperation(blockingOp);
+                break;
 
-        try
-        {
-            var blockingOp = new BaseActionBackgroundOp(args, PrepareAsync, ExecuteAsync, FollowUpAsync, ProcessUpdateData);
+            case DoForAllTypes.SingleBlockingMultiBackground:
+                if (args.Games.Count == 1)
+                {
+                    await blockingOp.DoForAllAsync();
+                }
+                else
+                {
+                    args.Api.AddBackgroundOperation(blockingOp);
+                }
 
-            await blockingOp.DoForAllAsync();
-        }
-        finally
-        {
-            if (args.DebugMode)
-            {
-                Log.Debug($"===> Finished {GetType()} with {args.Games.Count(g => g.NeedsToBeUpdated)} games affected. =======================");
-            }
+                break;
 
-            Cursor.Current = Cursors.Default;
-        }
-    }
-
-    /// <summary>
-    /// Executes the action on all games in a background Task.
-    /// </summary>
-    /// <param name="args">Arguments for the game action</param>
-    // TODO: If possible check if the same operation is still running and ask if the user still wants to add another one to the list.
-    public virtual void DoForAllBackground(BaseActionArgs args)
-        => args.Api.AddBackgroundOperation(new BaseActionBackgroundOp(args, PrepareAsync, ExecuteAsync, FollowUpAsync, ProcessUpdateData));
-
-    /// <summary>
-    /// DoForAll method that executes in a blocking thread for only one game but uses the background
-    /// operation for multiple games.
-    /// </summary>
-    /// <param name="args">Arguments for the game action</param>
-    public virtual async Task DoForAllBackgroundOrAsync(BaseActionArgs args)
-    {
-        if (args.Games.Count == 1)
-        {
-            await DoForAllAsync(args);
-        }
-        else
-        {
-            DoForAllBackground(args);
+            default: break;
         }
     }
 
