@@ -10,7 +10,6 @@ public abstract class BaseAction
 {
     public virtual string Id { get; } = "base.action";
     public virtual string Name { get; } = "Base Action";
-    //NEXT: Add option to do the game loop as an UpdateAsync for fast running actions
 
     /// <summary>
     /// Executes the action on all games in a blocking Task.

@@ -11,8 +11,6 @@ public class BaseActionBackgroundOp : BackgroundOperation
     private readonly Func<BaseActionArgs, Task<bool>> _prepareFunc;
     private readonly Func<Game, BaseActionGame, bool> _updateGameFunc;
 
-    private IGlobalProgressActionArgs? _globalProgressArgs;
-
     public BaseActionBackgroundOp(BaseActionArgs args,
             Func<BaseActionArgs, Task<bool>> prepareFunc,
         Func<BaseActionGame, BaseActionArgs, Task<bool>> executeFunc,
@@ -59,9 +57,29 @@ public class BaseActionBackgroundOp : BackgroundOperation
                 {
                     _actionArgs.IsBulkAction = false;
 
-                    _actionArgs.Games.First().NeedsToBeUpdated = await _executeFunc(_actionArgs.Games.First(), _actionArgs);
+                    if (_actionArgs.DoForAllType == DoForAllTypes.BlockingLoop)
+                    {
+                        _actionArgs.Games.First().NeedsToBeUpdated = await _executeFunc(_actionArgs.Games.First(), _actionArgs);
 
-                    await FollowUpAsync();
+                        await FollowUpAsync();
+                    }
+                    else
+                    {
+                        await _actionArgs.Api.Library.Games.UpdateAsync(
+                            [.. _actionArgs.Games.Select(g => g.Game.Id)],
+                            async (g) =>
+                            {
+                                var baseGame = _actionArgs.Games.FirstOrDefault(b => b.GameId == g.Id);
+
+                                if (baseGame is null)
+                                {
+                                    return;
+                                }
+
+                                baseGame.Game = g;
+                                baseGame.NeedsToBeUpdated = await _executeFunc(baseGame, _actionArgs);
+                            });
+                    }
 
                     await _followUpFunc(_actionArgs);
                 }
@@ -87,7 +105,7 @@ public class BaseActionBackgroundOp : BackgroundOperation
 
                                 if (_actionArgs.DoForAllType == DoForAllTypes.BlockingLoop)
                                 {
-                                    foreach (var game in _actionArgs.Games)
+                                    foreach (var game in _actionArgs.Games.Where(g => !g.Processed).ToList())
                                     {
                                         globalProgressArgs.SetText($"{_actionArgs.PluginName}{Environment.NewLine}{_actionArgs.ProgressMessage}{Environment.NewLine}{game.Game?.Name}");
 
@@ -96,6 +114,7 @@ public class BaseActionBackgroundOp : BackgroundOperation
                                             break;
                                         }
 
+                                        game.Processed = true;
                                         game.NeedsToBeUpdated = game.Game is not null && await _executeFunc(game, _actionArgs);
 
                                         globalProgressArgs.SetCurrentProgressValue(++counter);
@@ -105,18 +124,30 @@ public class BaseActionBackgroundOp : BackgroundOperation
                                 }
                                 else
                                 {
-                                    _globalProgressArgs = globalProgressArgs;
-                                    try
-                                    {
-                                        // NEXT: Implement for all actions set to BlockingBulkUpdate
-                                        await _actionArgs.Api.Library.Games.UpdateAsync(
-                                            [.. _actionArgs.Games.Where(g => g.NeedsToBeUpdated).Select(g => g.Game.Id)],
-                                            async (g) => await _executeFunc(new BaseActionGame(g), _actionArgs));
-                                    }
-                                    finally
-                                    {
-                                        _globalProgressArgs = null;
-                                    }
+                                    await _actionArgs.Api.Library.Games.UpdateAsync(
+                                        [.. _actionArgs.Games.Where(g => !g.Processed).Select(g => g.Game.Id)],
+                                        async (g) =>
+                                        {
+                                            globalProgressArgs.SetText($"{_actionArgs.PluginName}{Environment.NewLine}{_actionArgs.ProgressMessage}{Environment.NewLine}{g.Name}");
+
+                                            if (globalProgressArgs.CancelToken.IsCancellationRequested)
+                                            {
+                                                return;
+                                            }
+
+                                            var baseGame = _actionArgs.Games.FirstOrDefault(b => b.GameId == g.Id);
+
+                                            if (baseGame is null)
+                                            {
+                                                return;
+                                            }
+
+                                            baseGame.Game = g;
+                                            baseGame.Processed = true;
+                                            baseGame.NeedsToBeUpdated = await _executeFunc(baseGame, _actionArgs);
+
+                                            globalProgressArgs.SetCurrentProgressValue(++counter);
+                                        });
                                 }
 
                                 await _followUpFunc(_actionArgs);
@@ -185,8 +216,10 @@ public class BaseActionBackgroundOp : BackgroundOperation
                     var counter = 0;
 
                     //NEXT: Make background operations pause-able!
-                    foreach (var game in _actionArgs.Games)
+                    foreach (var game in _actionArgs.Games.Where(g => !g.Processed).ToList())
                     {
+                        game.Processed = true;
+
                         Status = $"{_actionArgs.ProgressMessage}{Environment.NewLine}{game.Game?.Name}";
 
                         if (_cancelToken.IsCancellationRequested)
