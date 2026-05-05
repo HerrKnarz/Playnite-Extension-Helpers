@@ -10,6 +10,8 @@ public class BaseActionBackgroundOp : BackgroundOperation
     private readonly Func<BaseActionArgs, Task> _followUpFunc;
     private readonly Func<BaseActionArgs, Task<bool>> _prepareFunc;
     private readonly Func<Game, BaseActionGame, bool> _updateGameFunc;
+    private bool _isPaused = false;
+    private bool _isResumed = false;
 
     public BaseActionBackgroundOp(BaseActionArgs args,
             Func<BaseActionArgs, Task<bool>> prepareFunc,
@@ -17,7 +19,7 @@ public class BaseActionBackgroundOp : BackgroundOperation
         Func<BaseActionArgs, Task> followUpFunc,
         Func<Game, BaseActionGame, bool> updateGameFunc) : base(args.Id, $"{args.PluginName}: {args.Name}")
     {
-        Pausable = false;
+        Pausable = true;
         _actionArgs = args;
         _prepareFunc = prepareFunc;
         _executeFunc = executeFunc;
@@ -191,6 +193,16 @@ public class BaseActionBackgroundOp : BackgroundOperation
         }
     }
 
+    public override async Task PauseAsync(PauseArgs args) => _isPaused = true;
+
+    public override async Task ResumeAsync(ResumeArgs args)
+    {
+        _isPaused = false;
+        _isResumed = true;
+
+        await StartAsync(new StartArgs());
+    }
+
     public override async Task StartAsync(StartArgs args)
     {
         _ = Task.Run(async () =>
@@ -201,35 +213,46 @@ public class BaseActionBackgroundOp : BackgroundOperation
                 {
                     if (_actionArgs.DebugMode)
                     {
-                        Log.Debug($"===> Started {_actionArgs.Id} for {_actionArgs.Games.Count} games. =======================");
+                        Log.Debug($"===> {(_isPaused ? "Resumed" : "Started")} {_actionArgs.Id} for {_actionArgs.Games.Count} games. =======================");
                     }
+
+                    var counter = 0;
 
                     Status = _actionArgs.ProgressMessage;
                     ProgressIsIndeterminate = false;
                     ProgressMaximum = _actionArgs.Games.Count;
 
-                    if (!await _prepareFunc(_actionArgs))
+                    if (!_isResumed)
                     {
-                        return;
+                        if (!await _prepareFunc(_actionArgs))
+                        {
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        counter = (int)ProgressValue;
                     }
 
-                    var counter = 0;
-
-                    //NEXT: Make background operations pause-able!
                     foreach (var game in _actionArgs.Games.Where(g => !g.Processed).ToList())
                     {
-                        game.Processed = true;
-
-                        Status = $"{_actionArgs.ProgressMessage}{Environment.NewLine}{game.Game?.Name}";
-
-                        if (_cancelToken.IsCancellationRequested)
+                        if (_cancelToken.IsCancellationRequested || _isPaused)
                         {
                             break;
                         }
 
+                        game.Processed = true;
+
+                        Status = $"{_actionArgs.ProgressMessage}{Environment.NewLine}{game.Game?.Name}";
+
                         game.NeedsToBeUpdated = game.Game is not null && await _executeFunc(game, _actionArgs);
 
                         ProgressValue = ++counter;
+                    }
+
+                    if (_isPaused)
+                    {
+                        return;
                     }
 
                     await FollowUpAsync();
@@ -250,7 +273,7 @@ public class BaseActionBackgroundOp : BackgroundOperation
             {
                 if (_actionArgs.DebugMode)
                 {
-                    Log.Debug($"===> Finished {_actionArgs.Id} with {_actionArgs.Games.Count(g => g.NeedsToBeUpdated)} games affected. =======================");
+                    Log.Debug($"===> {(_isPaused ? "Paused" : "Finished")} {_actionArgs.Id} with {_actionArgs.Games.Count(g => g.NeedsToBeUpdated)} games affected. =======================");
                 }
             }
         });
