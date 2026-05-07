@@ -9,7 +9,7 @@ public class BaseActionBackgroundOp : BackgroundOperation
     private readonly Func<BaseActionGame, BaseActionArgs, Task<bool>> _executeFunc;
     private readonly Func<BaseActionArgs, Task> _followUpFunc;
     private readonly Func<BaseActionArgs, Task<bool>> _prepareFunc;
-    private readonly Func<Game, BaseActionGame, bool> _updateGameFunc;
+    private readonly Func<Game, BaseActionGame, Task<bool>> _updateGameFunc;
     private bool _isPaused = false;
     private bool _isResumed = false;
 
@@ -17,7 +17,7 @@ public class BaseActionBackgroundOp : BackgroundOperation
             Func<BaseActionArgs, Task<bool>> prepareFunc,
         Func<BaseActionGame, BaseActionArgs, Task<bool>> executeFunc,
         Func<BaseActionArgs, Task> followUpFunc,
-        Func<Game, BaseActionGame, bool> updateGameFunc) : base(args.Id, $"{args.PluginName}: {args.Name}")
+        Func<Game, BaseActionGame, Task<bool>> updateGameFunc) : base(args.Id, $"{args.PluginName}: {args.Name}")
     {
         Pausable = true;
         _actionArgs = args;
@@ -189,7 +189,7 @@ public class BaseActionBackgroundOp : BackgroundOperation
     {
         if (_actionArgs.GamesNeedUpdate)
         {
-            await _actionArgs.Api.Library.Games.UpdateAsync([.. _actionArgs.Games.Where(g => g.NeedsToBeUpdated).Select(g => g.Game.Id)], UpdateInDbInFollowUp);
+            await _actionArgs.Api.Library.Games.UpdateAsync([.. _actionArgs.Games.Where(g => g.NeedsToBeUpdated).Select(g => g.Game.Id)], async (game) => await UpdateInDbInFollowUpAsync(game));
         }
     }
 
@@ -288,10 +288,10 @@ public class BaseActionBackgroundOp : BackgroundOperation
     /// </summary>
     /// <param name="game">Game to update</param>
     /// <returns>true, if the game needs to be updated.</returns>
-    public virtual bool UpdateInDbInFollowUp(Game game)
+    public virtual async Task<bool> UpdateInDbInFollowUpAsync(Game game)
     {
         var processedGame = _actionArgs?.Games.FirstOrDefault(g => g.GameId.Equals(game.Id));
 
-        return processedGame is not null && _updateGameFunc(game, processedGame);
+        return processedGame is not null && await _updateGameFunc(game, processedGame);
     }
 }

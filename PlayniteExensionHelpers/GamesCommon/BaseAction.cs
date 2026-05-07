@@ -17,7 +17,7 @@ public abstract class BaseAction
     /// <param name="args">Arguments for the game action</param>
     public virtual async Task DoForAllAsync(BaseActionArgs args)
     {
-        var blockingOp = new BaseActionBackgroundOp(args, PrepareAsync, ExecuteAsync, FollowUpAsync, ProcessUpdateData);
+        var blockingOp = new BaseActionBackgroundOp(args, PrepareAsync, ExecuteAsync, FollowUpAsync, ProcessUpdateDataAsync);
 
         switch (args.DoForAllType)
         {
@@ -93,5 +93,5 @@ public abstract class BaseAction
     /// The processed game containing values to apply to the database record.
     /// </param>
     /// <returns>True if the update was applied; otherwise, false.</returns>
-    public virtual bool ProcessUpdateData(Game gameToUpdate, BaseActionGame processedGame) => false;
+    public virtual async Task<bool> ProcessUpdateDataAsync(Game gameToUpdate, BaseActionGame processedGame) => false;
 }
