@@ -25,6 +25,17 @@ public enum DocumentType
     Empty = 2
 }
 
+public class LoadUrlArgs
+{
+    public HashSet<string>? AllowedCallbackUrls { get; set; }
+    public string CheckForContent { get; set; } = string.Empty;
+    public bool? DebugMode { get; set; } = false;
+    public int DelayAfterNavigation { get; set; } = 0;
+    public DocumentType DocumentType { get; set; } = DocumentType.Source;
+    public string Url { get; set; } = string.Empty;
+    public bool WaitForCallback { get; set; } = true;
+}
+
 public class WebWorker : IDisposable
 {
     private readonly bool _detailedDebug = false;
@@ -65,7 +76,14 @@ public class WebWorker : IDisposable
     {
         try
         {
-            var linkCheckResult = await LoadUrlAsync(apiUrl, DocumentType.Text, debugMode);
+            var loadUrlArgs = new LoadUrlArgs
+            {
+                Url = apiUrl,
+                DocumentType = DocumentType.Text,
+                DebugMode = debugMode
+            };
+
+            var linkCheckResult = await LoadUrlAsync(loadUrlArgs);
 
             if (linkCheckResult.StatusCode != HttpStatusCode.OK)
             {
@@ -100,7 +118,16 @@ public class WebWorker : IDisposable
     {
         try
         {
-            var linkCheckResult = await LoadUrlAsync(url, DocumentType.Empty, debugMode, checkForContent, allowedCallbackUrls);
+            var loadUrlArgs = new LoadUrlArgs
+            {
+                Url = url,
+                DocumentType = DocumentType.Empty,
+                DebugMode = debugMode,
+                CheckForContent = checkForContent,
+                AllowedCallbackUrls = allowedCallbackUrls
+            };
+
+            var linkCheckResult = await LoadUrlAsync(loadUrlArgs);
 
             return linkCheckResult.ErrorDetails.Length == 0 && (sameUrl
                        ? linkCheckResult.StatusCode == HttpStatusCode.OK && linkCheckResult.ResponseUrl == url
@@ -114,24 +141,24 @@ public class WebWorker : IDisposable
         }
     }
 
-    public async Task<UrlLoadResult> LoadUrlAsync(string url, DocumentType documentType = DocumentType.Source, bool? debugMode = false, string checkForContent = "", HashSet<string>? allowedCallbackUrls = null, bool waitForCallback = true)
+    public async Task<UrlLoadResult> LoadUrlAsync(LoadUrlArgs args)
     {
         var ts = DateTime.Now;
         string? pageText;
         UrlLoadResult = new UrlLoadResult();
 
-        debugMode ??= false;
+        args.DebugMode ??= false;
 
-        if (debugMode.Value)
+        if (args.DebugMode.Value)
         {
-            Log.Debug($"Worker {Id} - url {url}: 1. Started loading url.");
+            Log.Debug($"Worker {Id} - url {args.Url}: 1. Started loading url.");
         }
 
         try
         {
-            if (!url.IsValidHttpUrl())
+            if (!args.Url.IsValidHttpUrl())
             {
-                SetErrorResult("Invalid URL format.", url);
+                SetErrorResult("Invalid URL format.", args.Url);
                 return UrlLoadResult;
             }
 
@@ -139,16 +166,16 @@ public class WebWorker : IDisposable
 
             if (_webView is null)
             {
-                SetErrorResult("WebView not initialized.", url);
+                SetErrorResult("WebView not initialized.", args.Url);
                 return UrlLoadResult;
             }
 
-            RequestUrl = url;
+            RequestUrl = args.Url;
             _tcs = new TaskCompletionSource<bool>();
 
-            if (allowedCallbackUrls != null)
+            if (args.AllowedCallbackUrls != null)
             {
-                AllowedCallbackUrls.UnionWith(allowedCallbackUrls.Select(WebHelper.CleanUpUrl));
+                AllowedCallbackUrls.UnionWith(args.AllowedCallbackUrls.Select(WebHelper.CleanUpUrl));
             }
             else
             {
@@ -157,19 +184,24 @@ public class WebWorker : IDisposable
 
             await _webView.OpenAsync();
 
-            await _webView.NavigateAndWaitAsync(url, new(0, 0, 30));
+            await _webView.NavigateAndWaitAsync(args.Url, new(0, 0, 30));
 
-            pageText = documentType == DocumentType.Text ? await _webView.GetPageTextAsync() : await _webView.GetPageSourceAsync() ?? string.Empty;
+            if (args.DelayAfterNavigation > 0)
+            {
+                await Task.Delay(args.DelayAfterNavigation);
+            }
+
+            pageText = args.DocumentType == DocumentType.Text ? await _webView.GetPageTextAsync() : await _webView.GetPageSourceAsync() ?? string.Empty;
 
             UrlLoadResult.ResponseUrl = _webView.GetCurrentAddress() ?? string.Empty;
 
-            if (debugMode.Value)
+            if (args.DebugMode.Value)
             {
-                Log.Debug($"Worker {Id} - url {url}: 3. NavigateAndWait - duration: ({(DateTime.Now - ts).TotalMilliseconds} ms)");
+                Log.Debug($"Worker {Id} - url {args.Url}: 3. NavigateAndWait - duration: ({(DateTime.Now - ts).TotalMilliseconds} ms)");
                 ts = DateTime.Now;
             }
 
-            if (waitForCallback)
+            if (args.WaitForCallback)
             {
                 try
                 {
@@ -177,13 +209,13 @@ public class WebWorker : IDisposable
                 }
                 catch
                 {
-                    if (debugMode.Value)
+                    if (args.DebugMode.Value)
                     {
-                        Log.Debug($"Worker {Id} - url {url}: 2. ResourceLoadedCallback - timeout!");
+                        Log.Debug($"Worker {Id} - url {args.Url}: 2. ResourceLoadedCallback - timeout!");
 
                         // TODO: Remove notification once I tested it with enough games!
                         var notificattionMessage = new NotificationMessage("LinkUtilities",
-                            $"ResourceLoadedCallback timeout{Environment.NewLine}Checked url: {url} {Environment.NewLine}Response url: {UrlLoadResult.ResponseUrl}",
+                            $"ResourceLoadedCallback timeout{Environment.NewLine}Checked url: {args.Url} {Environment.NewLine}Response url: {UrlLoadResult.ResponseUrl}",
                             NotificationSeverity.Info);
 
                         API?.Notifications.Add(notificattionMessage);
@@ -199,9 +231,9 @@ public class WebWorker : IDisposable
                 UrlLoadResult.StatusCode = HttpStatusCode.SeeOther;
             }
 
-            if (debugMode.Value)
+            if (args.DebugMode.Value)
             {
-                Log.Debug($"Worker {Id} - url {url}: 4. Callback: / status code {UrlLoadResult.StatusCode} / Request url: {UrlLoadResult.RequestUrl}");
+                Log.Debug($"Worker {Id} - url {args.Url}: 4. Callback: / status code {UrlLoadResult.StatusCode} / Request url: {UrlLoadResult.RequestUrl}");
                 ts = DateTime.Now;
             }
 
@@ -209,7 +241,7 @@ public class WebWorker : IDisposable
             {
                 UrlLoadResult.PageTitle = WebHelper.GetPageTitle(pageText);
 
-                if (documentType != DocumentType.Empty)
+                if (args.DocumentType != DocumentType.Empty)
                 {
                     UrlLoadResult.PageText = pageText;
                 }
@@ -220,9 +252,9 @@ public class WebWorker : IDisposable
                 return UrlLoadResult;
             }
 
-            if (checkForContent.Length > 0)
+            if (args.CheckForContent.Length > 0)
             {
-                UrlLoadResult.StatusCode = pageText?.Contains(checkForContent) ?? false ? HttpStatusCode.OK : HttpStatusCode.ExpectationFailed;
+                UrlLoadResult.StatusCode = pageText?.Contains(args.CheckForContent) ?? false ? HttpStatusCode.OK : HttpStatusCode.ExpectationFailed;
 
                 if (UrlLoadResult.StatusCode != HttpStatusCode.OK)
                 {
@@ -234,7 +266,7 @@ public class WebWorker : IDisposable
         }
         catch (Exception ex)
         {
-            WebHelper.CatchError(UrlLoadResult, ex, url);
+            WebHelper.CatchError(UrlLoadResult, ex, args.Url);
 
             return UrlLoadResult;
         }
@@ -242,9 +274,9 @@ public class WebWorker : IDisposable
         {
             AllowedCallbackUrls.Clear();
 
-            if (debugMode.Value)
+            if (args.DebugMode.Value)
             {
-                Log.Debug($"Worker {Id} - url {url}: 5. Finished loading - status code {UrlLoadResult.StatusCode} / duration: ({(DateTime.Now - ts).TotalMilliseconds} ms)  / response url: {UrlLoadResult.ResponseUrl} / title: {UrlLoadResult.PageTitle}.");
+                Log.Debug($"Worker {Id} - url {args.Url}: 5. Finished loading - status code {UrlLoadResult.StatusCode} / duration: ({(DateTime.Now - ts).TotalMilliseconds} ms)  / response url: {UrlLoadResult.ResponseUrl} / title: {UrlLoadResult.PageTitle}.");
             }
         }
     }
