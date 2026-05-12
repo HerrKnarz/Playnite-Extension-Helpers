@@ -29,7 +29,6 @@ public class LoadUrlArgs
 {
     public HashSet<string>? AllowedCallbackUrls { get; set; }
     public string CheckForContent { get; set; } = string.Empty;
-    public bool? DebugMode { get; set; } = false;
     public int DelayAfterNavigation { get; set; } = 0;
     public DocumentType DocumentType { get; set; } = DocumentType.Source;
     public string Url { get; set; } = string.Empty;
@@ -38,13 +37,14 @@ public class LoadUrlArgs
 
 public class WebWorker : IDisposable
 {
+    private readonly bool _debugMode;
     private readonly bool _detailedDebug = false;
     private readonly WebViewSettings _webViewSettings;
     private readonly IPlayniteApi? API;
     private TaskCompletionSource<bool> _tcs = new();
     private IWebView? _webView;
 
-    public WebWorker(int id, IPlayniteApi? api)
+    public WebWorker(int id, IPlayniteApi? api, bool debugMode)
     {
         Id = id;
         API = api;
@@ -54,6 +54,8 @@ public class WebWorker : IDisposable
             JavaScriptEnabled = true,
             UserAgent = WebHelper.AgentString
         };
+
+        _debugMode = debugMode;
     }
 
     public HashSet<string> AllowedCallbackUrls { get; set; } = [];
@@ -72,15 +74,14 @@ public class WebWorker : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    public async Task<T?> GetJsonFromApiAsync<T>(string apiUrl, string apiName, bool debugMode = false)
+    public async Task<T?> GetJsonFromApiAsync<T>(string apiUrl, string apiName)
     {
         try
         {
             var loadUrlArgs = new LoadUrlArgs
             {
                 Url = apiUrl,
-                DocumentType = DocumentType.Text,
-                DebugMode = debugMode
+                DocumentType = DocumentType.Text
             };
 
             var linkCheckResult = await LoadUrlAsync(loadUrlArgs);
@@ -114,7 +115,7 @@ public class WebWorker : IDisposable
     /// <param name="debugMode">When true debug messages will be logged</param>
     /// <param name="checkForContent">Content to check for</param>
     /// <returns>True, if the URL is reachable</returns>
-    public async Task<bool> IsUrlOkAsync(string url, bool sameUrl = false, string wrongTitle = "", bool? debugMode = false, string checkForContent = "", HashSet<string>? allowedCallbackUrls = null)
+    public async Task<bool> IsUrlOkAsync(string url, bool sameUrl = false, string wrongTitle = "", string checkForContent = "", HashSet<string>? allowedCallbackUrls = null)
     {
         try
         {
@@ -122,7 +123,6 @@ public class WebWorker : IDisposable
             {
                 Url = url,
                 DocumentType = DocumentType.Empty,
-                DebugMode = debugMode,
                 CheckForContent = checkForContent,
                 AllowedCallbackUrls = allowedCallbackUrls
             };
@@ -147,9 +147,7 @@ public class WebWorker : IDisposable
         string? pageText;
         UrlLoadResult = new UrlLoadResult();
 
-        args.DebugMode ??= false;
-
-        if (args.DebugMode.Value)
+        if (_debugMode)
         {
             Log.Debug($"Worker {Id} - url {args.Url}: 1. Started loading url.");
         }
@@ -162,7 +160,7 @@ public class WebWorker : IDisposable
                 return UrlLoadResult;
             }
 
-            Reset();
+            Reset(args.WaitForCallback);
 
             if (_webView is null)
             {
@@ -195,7 +193,7 @@ public class WebWorker : IDisposable
 
             UrlLoadResult.ResponseUrl = _webView.GetCurrentAddress() ?? string.Empty;
 
-            if (args.DebugMode.Value)
+            if (_debugMode)
             {
                 Log.Debug($"Worker {Id} - url {args.Url}: 3. NavigateAndWait - duration: ({(DateTime.Now - ts).TotalMilliseconds} ms)");
                 ts = DateTime.Now;
@@ -209,7 +207,7 @@ public class WebWorker : IDisposable
                 }
                 catch
                 {
-                    if (args.DebugMode.Value)
+                    if (_debugMode)
                     {
                         Log.Debug($"Worker {Id} - url {args.Url}: 2. ResourceLoadedCallback - timeout!");
 
@@ -231,7 +229,7 @@ public class WebWorker : IDisposable
                 UrlLoadResult.StatusCode = HttpStatusCode.SeeOther;
             }
 
-            if (args.DebugMode.Value)
+            if (_debugMode)
             {
                 Log.Debug($"Worker {Id} - url {args.Url}: 4. Callback: / status code {UrlLoadResult.StatusCode} / Request url: {UrlLoadResult.RequestUrl}");
                 ts = DateTime.Now;
@@ -274,19 +272,18 @@ public class WebWorker : IDisposable
         {
             AllowedCallbackUrls.Clear();
 
-            if (args.DebugMode.Value)
+            if (_debugMode)
             {
                 Log.Debug($"Worker {Id} - url {args.Url}: 5. Finished loading - status code {UrlLoadResult.StatusCode} / duration: ({(DateTime.Now - ts).TotalMilliseconds} ms)  / response url: {UrlLoadResult.ResponseUrl} / title: {UrlLoadResult.PageTitle}.");
             }
         }
     }
 
-    internal void Reset()
+    internal void Reset(bool needsCallback)
     {
         //_webView?.Close();
         _webView?.Dispose();
-
-        _webViewSettings.ResourceLoadedCallback = WebViewCallback;
+        _webViewSettings.ResourceLoadedCallback = needsCallback ? WebViewCallback : null;
         _webView = API?.WebView.CreateOffscreenView(_webViewSettings);
     }
 
@@ -316,7 +313,12 @@ public class WebWorker : IDisposable
                 {
                     UrlLoadResult.StatusCode = (HttpStatusCode)callback.Response.StatusCode;
                     UrlLoadResult.RequestUrl = callback.Request.Url ?? string.Empty;
-                    Log.Debug($"Worker {Id} - url {RequestUrl}: 2. ResourceLoadedCallback - callback url: {callback.Request.Url} / status code: {UrlLoadResult.StatusCode}");
+
+                    if (_debugMode)
+                    {
+                        Log.Debug($"Worker {Id} - url {RequestUrl}: 2. ResourceLoadedCallback - callback url: {callback.Request.Url} / status code: {UrlLoadResult.StatusCode}");
+                    }
+
                     _tcs.TrySetResult(true);
                 }
                 catch (Exception ex)

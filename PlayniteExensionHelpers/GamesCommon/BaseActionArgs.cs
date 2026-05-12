@@ -5,7 +5,6 @@ namespace PlayniteExtensionHelpers.GamesCommon;
 public enum DoForAllTypes
 {
     BlockingLoop,
-    BlockingBulkUpdate,
     BackgroundOperation,
     SingleBlockingMultiBackground
 }
@@ -25,4 +24,5 @@ public class BaseActionArgs(string id, string name, IPlayniteApi api, List<BaseA
     public virtual string ProgressMessage { get; set; } = string.Empty;
     public virtual string ResultMessageId { get; set; } = string.Empty;
     public virtual bool ShowDialogs { get; set; } = true;
+    public virtual bool UpdateGamesAfterLoop { get; set; } = false;
 }

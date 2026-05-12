@@ -3,14 +3,21 @@ using System.Text.RegularExpressions;
 
 namespace PlayniteExtensionHelpers;
 
-internal static partial class SteamHelper
+public static partial class SteamHelper
 {
-    internal static string ExternalIdType = "steam";
-    internal static string SteamId = "Crow.Steam";
     private static readonly string _steamAppPrefix = "steam://openurl/";
-    private static readonly Regex _steamLinkRegex = SteamLinkRegex();
+    public static string ExternalIdType => "steam";
+    public static string SteamId => "Crow.Steam";
 
-    internal static string ChangeSteamLink(string url, bool toStoreLink = false)
+    /// <summary>
+    /// Converts a Steam store/community link to a steam://openurl/ link and vice versa.
+    /// </summary>
+    /// <param name="url">The URL to convert.</param>
+    /// <param name="toStoreLink">
+    /// If true, converts to a store link; otherwise, converts to a steam://openurl/ link.
+    /// </param>
+    /// <returns>The converted URL.</returns>
+    public static string ConvertSteamLink(string url, bool toStoreLink = false)
     {
         return toStoreLink && url.StartsWith("http")
             ? _steamAppPrefix + url
@@ -19,7 +26,17 @@ internal static partial class SteamHelper
             : url;
     }
 
-    internal static async Task<bool> ConvertSteamLinksAsync(Game game, bool toStoreLink = false, bool updateDb = false, IPlayniteApi? api = null)
+    /// <summary>
+    /// Converts all steam links of a game to a steam://openurl/ link and vice versa.
+    /// </summary>
+    /// <param name="game">The game for which to convert links.</param>
+    /// <param name="toStoreLink">
+    /// If true, converts to a store link; otherwise, converts to a steam://openurl/ link.
+    /// </param>
+    /// <param name="updateDb">If true, updates the game in the database.</param>
+    /// <param name="api">The Playnite API instance.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    public static async Task<bool> ConvertSteamLinksAsync(Game game, bool toStoreLink = false, bool updateDb = false, IPlayniteApi? api = null)
     {
         if (!game.Links.HasItems())
         {
@@ -30,22 +47,19 @@ internal static partial class SteamHelper
 
         foreach (var link in game.Links)
         {
-            if (link.Url.IsNullOrEmpty() || !_steamLinkRegex.IsMatch(link.Url))
+            if (link.Url.IsNullOrEmpty() || !SteamLinkRegex().IsMatch(link.Url))
             {
                 continue;
             }
 
-            var url = ChangeSteamLink(link.Url, toStoreLink);
+            var url = ConvertSteamLink(link.Url, toStoreLink);
 
             if (url == link.Url)
             {
                 continue;
             }
 
-            UIDispatcher.Invoke(delegate
-            {
-                link.Url = url;
-            });
+            link.Url = url;
 
             mustUpdate = true;
         }
@@ -63,7 +77,13 @@ internal static partial class SteamHelper
         return true;
     }
 
-    internal static string? GetSteamId(Game game)
+    /// <summary>
+    /// Tries to determine the steam id of a game by checking the library id, external identifiers
+    /// and links.
+    /// </summary>
+    /// <param name="game">The game for which to determine the steam id.</param>
+    /// <returns>The steam id if found; otherwise, null.</returns>
+    public static string? GetSteamId(Game game)
     {
         if (game.LibraryId == SteamId)
         {
@@ -85,12 +105,17 @@ internal static partial class SteamHelper
             return string.Empty;
         }
 
-        var steamLink = game.Links.FirstOrDefault(l => !l.Url.IsNullOrEmpty() && _steamLinkRegex.IsMatch(l.Url));
+        var steamLink = game.Links.FirstOrDefault(l => !l.Url.IsNullOrEmpty() && SteamLinkRegex().IsMatch(l.Url));
 
         return steamLink is null ? null : GetSteamIdFromUrl(steamLink.Url);
     }
 
-    internal static string? GetSteamIdFromUrl(string? url)
+    /// <summary>
+    /// Gets the steam id from a steam store/community link.
+    /// </summary>
+    /// <param name="url">The URL from which to extract the steam id.</param>
+    /// <returns>The steam id if found; otherwise, null.</returns>
+    public static string? GetSteamIdFromUrl(string? url)
     {
         try
         {
@@ -99,7 +124,7 @@ internal static partial class SteamHelper
                 return null;
             }
 
-            var linkMatch = _steamLinkRegex.Match(url);
+            var linkMatch = SteamLinkRegex().Match(url);
 
             return linkMatch.Success ? linkMatch.Groups[1].Value : null;
         }

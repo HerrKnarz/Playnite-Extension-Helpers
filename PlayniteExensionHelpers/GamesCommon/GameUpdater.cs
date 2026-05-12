@@ -45,7 +45,7 @@ public class GameUpdater
             return;
         }
 
-        await UIDispatcher.Invoke(async delegate
+        await UIDispatcher.InvokeAsync(async delegate
         {
             await api.Library.Games.UpdateAsync(gamesToUpdate);
         });

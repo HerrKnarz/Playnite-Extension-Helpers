@@ -27,170 +27,18 @@ public class BaseActionBackgroundOp : BackgroundOperation
         _updateGameFunc = updateGameFunc;
     }
 
-    public override async ValueTask DisposeAsync()
-    {
-        _cancelToken.Dispose();
-        GC.SuppressFinalize(this);
-    }
-
-    /// <summary>
-    /// Executes the action on all games in a blocking Task.
-    /// </summary>
-    /// <param name="args">Arguments for the game action</param>
-    public virtual async Task DoForAllAsync()
-    {
-        if (_actionArgs.DebugMode)
-        {
-            Log.Debug($"===> Started {_actionArgs.Name} for {_actionArgs.Games.Count} games. =======================");
-        }
-
-        Cursor.Current = Cursors.WaitCursor;
-
-        try
-        {
-            try
-            {
-                if (!await _prepareFunc(_actionArgs))
-                {
-                    return;
-                }
-
-                if (_actionArgs.Games.Count == 1)
-                {
-                    _actionArgs.IsBulkAction = false;
-
-                    if (_actionArgs.DoForAllType == DoForAllTypes.BlockingLoop)
-                    {
-                        _actionArgs.Games.First().NeedsToBeUpdated = await _executeFunc(_actionArgs.Games.First(), _actionArgs);
-
-                        await FollowUpAsync();
-                    }
-                    else
-                    {
-                        await _actionArgs.Api.Library.Games.UpdateAsync(
-                            [.. _actionArgs.Games.Select(g => g.Game.Id)],
-                            async (g) =>
-                            {
-                                var baseGame = _actionArgs.Games.FirstOrDefault(b => b.GameId == g.Id);
-
-                                if (baseGame is null)
-                                {
-                                    return;
-                                }
-
-                                baseGame.Game = g;
-                                baseGame.NeedsToBeUpdated = await _executeFunc(baseGame, _actionArgs);
-                            });
-                    }
-
-                    await _followUpFunc(_actionArgs);
-                }
-                // if we have more than one game in the list, we want to show a progress bar.
-                else if (_actionArgs.Games.Count > 1)
-                {
-                    var globalProgressOptions = new GlobalProgressOptions(
-                        $"{_actionArgs.PluginName} - {_actionArgs.ProgressMessage}",
-                        true
-                    )
-                    {
-                        IsIndeterminate = false
-                    };
-
-                    await _actionArgs.Api.Dialogs.ShowAsyncBlockingProgressAsync(globalProgressOptions,
-                        async (globalProgressArgs) =>
-                        {
-                            try
-                            {
-                                globalProgressArgs.SetProgressMaxValue(_actionArgs.Games.Count);
-
-                                var counter = 0;
-
-                                if (_actionArgs.DoForAllType == DoForAllTypes.BlockingLoop)
-                                {
-                                    foreach (var game in _actionArgs.Games.Where(g => !g.Processed).ToList())
-                                    {
-                                        globalProgressArgs.SetText($"{_actionArgs.PluginName}{Environment.NewLine}{_actionArgs.ProgressMessage}{Environment.NewLine}{game.Game?.Name}");
-
-                                        if (globalProgressArgs.CancelToken.IsCancellationRequested)
-                                        {
-                                            break;
-                                        }
-
-                                        game.Processed = true;
-                                        game.NeedsToBeUpdated = game.Game is not null && await _executeFunc(game, _actionArgs);
-
-                                        globalProgressArgs.SetCurrentProgressValue(++counter);
-                                    }
-
-                                    await FollowUpAsync();
-                                }
-                                else
-                                {
-                                    await _actionArgs.Api.Library.Games.UpdateAsync(
-                                        [.. _actionArgs.Games.Where(g => !g.Processed).Select(g => g.Game.Id)],
-                                        async (g) =>
-                                        {
-                                            globalProgressArgs.SetText($"{_actionArgs.PluginName}{Environment.NewLine}{_actionArgs.ProgressMessage}{Environment.NewLine}{g.Name}");
-
-                                            if (globalProgressArgs.CancelToken.IsCancellationRequested)
-                                            {
-                                                return;
-                                            }
-
-                                            var baseGame = _actionArgs.Games.FirstOrDefault(b => b.GameId == g.Id);
-
-                                            if (baseGame is null)
-                                            {
-                                                return;
-                                            }
-
-                                            baseGame.Game = g;
-                                            baseGame.Processed = true;
-                                            baseGame.NeedsToBeUpdated = await _executeFunc(baseGame, _actionArgs);
-
-                                            globalProgressArgs.SetCurrentProgressValue(++counter);
-                                        });
-                                }
-
-                                await _followUpFunc(_actionArgs);
-                            }
-                            catch (Exception ex)
-                            {
-                                Log.Error(ex);
-                            }
-                        });
-
-                    if (!_actionArgs.ShowDialogs)
-                    {
-                        return;
-                    }
-
-                    Cursor.Current = Cursors.Default;
-                    await _actionArgs.Api.Dialogs.ShowMessageAsync(_actionArgs.Api.GetLocalizedString(_actionArgs.ResultMessageId, ("gameCount", _actionArgs.Games.Count(g => g.NeedsToBeUpdated))));
-                }
-            }
-            catch (Exception e)
-            {
-                Log.Error(e);
-            }
-        }
-        finally
-        {
-            if (_actionArgs.DebugMode)
-            {
-                Log.Debug($"===> Finished {_actionArgs.Name} with {_actionArgs.Games.Count(g => g.NeedsToBeUpdated)} games affected. =======================");
-            }
-
-            Cursor.Current = Cursors.Default;
-        }
-    }
-
-    public virtual async Task FollowUpAsync()
+    public virtual async Task BackgroundUpdateAsync()
     {
         if (_actionArgs.GamesNeedUpdate)
         {
             await _actionArgs.Api.Library.Games.UpdateAsync([.. _actionArgs.Games.Where(g => g.NeedsToBeUpdated).Select(g => g.Game.Id)], async (game) => await UpdateInDbInFollowUpAsync(game));
         }
+    }
+
+    public override async ValueTask DisposeAsync()
+    {
+        _cancelToken.Dispose();
+        GC.SuppressFinalize(this);
     }
 
     public override async Task PauseAsync(PauseArgs args) => _isPaused = true;
@@ -255,7 +103,7 @@ public class BaseActionBackgroundOp : BackgroundOperation
                         return;
                     }
 
-                    await FollowUpAsync();
+                    await BackgroundUpdateAsync();
 
                     await _followUpFunc(_actionArgs);
 

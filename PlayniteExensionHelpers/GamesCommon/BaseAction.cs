@@ -17,28 +17,25 @@ public abstract class BaseAction
     /// <param name="args">Arguments for the game action</param>
     public virtual async Task DoForAllAsync(BaseActionArgs args)
     {
-        var blockingOp = new BaseActionBackgroundOp(args, PrepareAsync, ExecuteAsync, FollowUpAsync, ProcessUpdateDataAsync);
-
         switch (args.DoForAllType)
         {
             case DoForAllTypes.BlockingLoop:
-            case DoForAllTypes.BlockingBulkUpdate:
-                await blockingOp.DoForAllAsync();
+                await RunInBlockingLoop(args);
                 break;
 
             // TODO: If possible check if the same operation is still running and ask if the user still wants to add another one to the list.
             case DoForAllTypes.BackgroundOperation:
-                args.Api.AddBackgroundOperation(blockingOp);
+                args.Api.AddBackgroundOperation(new BaseActionBackgroundOp(args, PrepareAsync, ExecuteAsync, FollowUpAsync, ProcessUpdateDataAsync));
                 break;
 
             case DoForAllTypes.SingleBlockingMultiBackground:
                 if (args.Games.Count == 1)
                 {
-                    await blockingOp.DoForAllAsync();
+                    await RunInBlockingLoop(args);
                 }
                 else
                 {
-                    args.Api.AddBackgroundOperation(blockingOp);
+                    args.Api.AddBackgroundOperation(new BaseActionBackgroundOp(args, PrepareAsync, ExecuteAsync, FollowUpAsync, ProcessUpdateDataAsync));
                 }
 
                 break;
@@ -94,4 +91,124 @@ public abstract class BaseAction
     /// </param>
     /// <returns>True if the update was applied; otherwise, false.</returns>
     public virtual async Task<bool> ProcessUpdateDataAsync(Game gameToUpdate, BaseActionGame processedGame) => false;
+
+    public virtual async Task RunInBlockingLoop(BaseActionArgs args)
+    {
+        if (args.DebugMode)
+        {
+            Log.Debug($"===> Started {args.Name} for {args.Games.Count} games. =======================");
+        }
+
+        Cursor.Current = Cursors.WaitCursor;
+
+        try
+        {
+            try
+            {
+                if (!await PrepareAsync(args))
+                {
+                    return;
+                }
+
+                var globalProgressOptions = new GlobalProgressOptions(
+                    $"{args.PluginName} - {args.ProgressMessage}",
+                    true
+                )
+                {
+                    IsIndeterminate = false
+                };
+
+                await args.Api.Dialogs.ShowAsyncBlockingProgressAsync(globalProgressOptions,
+                    async (globalProgressArgs) =>
+                    {
+                        try
+                        {
+                            globalProgressArgs.SetProgressMaxValue(args.Games.Count);
+
+                            var counter = 0;
+
+                            async Task ExecuteActionAsync(Game game)
+                            {
+                                globalProgressArgs.SetText($"{args.PluginName}{Environment.NewLine}{args.ProgressMessage}{Environment.NewLine}{game.Name}");
+
+                                if (globalProgressArgs.CancelToken.IsCancellationRequested)
+                                {
+                                    return;
+                                }
+
+                                var baseGame = args.Games.FirstOrDefault(b => b.GameId == game.Id);
+
+                                if (baseGame is null)
+                                {
+                                    return;
+                                }
+
+                                baseGame.Game = game;
+                                baseGame.Processed = true;
+                                baseGame.NeedsToBeUpdated = await ExecuteAsync(baseGame, args);
+
+                                globalProgressArgs.SetCurrentProgressValue(++counter);
+                            }
+
+                            if (args.UpdateGamesAfterLoop)
+                            {
+                                foreach (var game in args.Games)
+                                {
+                                    await ExecuteActionAsync(game.Game);
+                                }
+
+                                if (args.GamesNeedUpdate)
+                                {
+                                    await args.Api.Library.Games.UpdateAsync([.. args.Games.Where(g => g.NeedsToBeUpdated).Select(g => g.Game.Id)], async (game) =>
+                                    {
+                                        var processedGame = args?.Games.FirstOrDefault(g => g.GameId.Equals(game.Id));
+
+                                        if (processedGame is not null)
+                                        {
+                                            await ProcessUpdateDataAsync(game, processedGame);
+                                        }
+                                    });
+                                }
+                            }
+                            else
+                            {
+                                await UIDispatcher.InvokeAsync(async delegate
+                                {
+                                    await args.Api.Library.Games.UpdateAsync(
+                                        [.. args.Games.Where(g => !g.Processed).Select(g => g.Game.Id)],
+                                        async (g) => await ExecuteActionAsync(g));
+                                });
+                            }
+
+                            await FollowUpAsync(args);
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error(ex);
+                        }
+                    });
+
+                if (!args.ShowDialogs)
+                {
+                    return;
+                }
+
+                Cursor.Current = Cursors.Default;
+                await args.Api.Dialogs.ShowMessageAsync(args.Api.GetLocalizedString(args.ResultMessageId, ("gameCount", args.Games.Count(g => g.NeedsToBeUpdated))));
+            }
+            catch (Exception e)
+            {
+                Log.Error(e);
+            }
+        }
+        finally
+        {
+            if (args.DebugMode)
+            {
+                Log.Debug($"===> Finished {args.Name} with {args.Games.Count(g => g.NeedsToBeUpdated)} games affected. =======================");
+            }
+
+            Cursor.Current = Cursors.Default;
+        }
+    }
 }
