@@ -102,7 +102,7 @@ public static partial class SteamHelper
 
         if (!game.Links.HasItems())
         {
-            return string.Empty;
+            return null;
         }
 
         var steamLink = game.Links.FirstOrDefault(l => !l.Url.IsNullOrEmpty() && SteamLinkRegex().IsMatch(l.Url));
