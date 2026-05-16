@@ -8,11 +8,10 @@ public static class GogHelper
     public static string GogId => "Crow.GOG";
 
     /// <summary>
-    /// Tries to determine the steam id of a game by checking the library id, external identifiers
-    /// and links.
+    /// Tries to determine the GOG id of a game by checking the library id and external identifiers.
     /// </summary>
-    /// <param name="game">The game for which to determine the steam id.</param>
-    /// <returns>The steam id if found; otherwise, null.</returns>
+    /// <param name="game">The game for which to determine the GOG id.</param>
+    /// <returns>The GOG id if found; otherwise, null.</returns>
     public static string? GetGogId(Game game)
     {
         if (game.LibraryId == GogId)
