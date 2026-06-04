@@ -4,5 +4,5 @@
     <File Path="LICENSE" />
     <File Path="README.md" />
   </Folder>
-  <Project Path="PlayniteExensionHelpers/PlayniteExtensionHelpers.csproj" />
+  <Project Path="src/PlayniteExtensionHelpers.csproj" />
 </Solution>
