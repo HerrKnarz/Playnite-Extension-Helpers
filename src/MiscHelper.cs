@@ -122,7 +122,7 @@ public static class MiscHelper
     /// <param name="keySelector">The key selector to determine the sort order</param>
     public static void Sort<TSource, TKey>(this ObservableCollection<TSource> source, Func<TSource, TKey> keySelector)
     {
-        var sortedList = source.OrderBy(keySelector).ToList();
+        var sortedList = source.OrderBy(keySelector, StringComparer.CurrentCultureIgnoreCase).ToList();
         source.Clear();
         foreach (var sortedItem in sortedList)
         {
