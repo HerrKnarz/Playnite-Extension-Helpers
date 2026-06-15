@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <PackageReference Include="AngleSharp" Version="1.4.0" />
+    <PackageReference Include="Microsoft.Xaml.Behaviors.Wpf" Version="1.1.142" />
     <PackageReference Include="Playnite.SDK" Version="11.0.0-alpha11" />
   </ItemGroup>
 
