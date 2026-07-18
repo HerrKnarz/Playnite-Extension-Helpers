@@ -10,7 +10,7 @@ public class SettingsOption : SettingsBaseControl
             "HorizontalControlAlignment",
             typeof(HorizontalAlignment),
             typeof(SettingsOption),
-            new UIPropertyMetadata(HorizontalAlignment.Right));
+            new UIPropertyMetadata(HorizontalAlignment.Stretch));
 
     public static readonly DependencyProperty MinLabelWidthProperty =
         DependencyProperty.Register(
